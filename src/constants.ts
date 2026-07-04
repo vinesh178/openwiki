@@ -5,15 +5,18 @@ export const FIREWORKS_API_KEY_ENV_KEY = "FIREWORKS_API_KEY";
 export const OPENAI_API_KEY_ENV_KEY = "OPENAI_API_KEY";
 export const ANTHROPIC_API_KEY_ENV_KEY = "ANTHROPIC_API_KEY";
 export const OPENROUTER_API_KEY_ENV_KEY = "OPENROUTER_API_KEY";
+export const OLLAMA_API_KEY_ENV_KEY = "OLLAMA_API_KEY";
 export const OPENWIKI_PROVIDER_ENV_KEY = "OPENWIKI_PROVIDER";
 export const OPENWIKI_MODEL_ID_ENV_KEY = "OPENWIKI_MODEL_ID";
 export const DEFAULT_PROVIDER = "openrouter";
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+export const OLLAMA_BASE_URL = "https://ollama.com/v1";
 
 export type OpenWikiProvider =
   | "anthropic"
   | "baseten"
   | "fireworks"
+  | "ollama"
   | "openai"
   | "openrouter";
 
@@ -32,6 +35,7 @@ type ProviderConfig = {
 };
 
 export const SELECTABLE_OPENWIKI_PROVIDERS = [
+  "ollama",
   "openrouter",
   "baseten",
   "fireworks",
@@ -40,6 +44,16 @@ export const SELECTABLE_OPENWIKI_PROVIDERS = [
 ] as const satisfies readonly SelectableOpenWikiProvider[];
 
 export const PROVIDER_CONFIGS: Record<OpenWikiProvider, ProviderConfig> = {
+  ollama: {
+    apiKeyEnvKey: OLLAMA_API_KEY_ENV_KEY,
+    baseURL: OLLAMA_BASE_URL,
+    label: "Ollama Cloud",
+    modelOptions: [
+      { id: "glm-5.2", label: "GLM 5.2" },
+      { id: "qwen3-coder:480b", label: "Qwen3 Coder 480B" },
+      { id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
+    ],
+  },
   baseten: {
     apiKeyEnvKey: BASETEN_API_KEY_ENV_KEY,
     baseURL: "https://inference.baseten.co/v1",
