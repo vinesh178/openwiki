@@ -24,10 +24,13 @@ export const PROVIDER_CONFIGS = {
         apiKeyEnvKey: OLLAMA_API_KEY_ENV_KEY,
         baseURL: OLLAMA_BASE_URL,
         label: "Ollama Cloud",
+        // qwen3-coder is the default: it reliably emits well-formed tool-call
+        // arguments across long agent runs on large repos. glm-5.2 emits broken
+        // tool JSON deep into big runs and is kept only as a selectable fallback.
         modelOptions: [
-            { id: "glm-5.2", label: "GLM 5.2" },
             { id: "qwen3-coder:480b", label: "Qwen3 Coder 480B" },
             { id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
+            { id: "glm-5.2", label: "GLM 5.2" },
         ],
     },
     baseten: {

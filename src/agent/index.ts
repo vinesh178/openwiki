@@ -398,19 +398,25 @@ async function createModel(provider: OpenWikiProvider, modelId: string) {
   }
 
   const providerConfig = getProviderConfig(provider);
+  const isOllama = provider === "ollama";
 
   return new ChatOpenAI({
     apiKey: process.env[getProviderApiKeyEnvKey(provider)],
     configuration: providerConfig.baseURL
       ? {
           baseURL: providerConfig.baseURL,
-          // Ollama Cloud's OpenAI-compatible endpoint rejects multi-part array
-          // `content` (which LangChain emits on tool/system/assistant messages)
-          // with "400 invalid message format". Flatten array content to strings
-          // on the way out so the agent's tool loop is accepted.
-          ...(provider === "ollama" ? { fetch: ollamaCompatFetch } : {}),
+          // Ollama Cloud's OpenAI-compatible endpoint needs two fixups, both
+          // applied by ollamaCompatFetch. Streaming is disabled for Ollama so
+          // the response is a single JSON blob the fetch can rewrite safely.
+          ...(isOllama ? { fetch: ollamaCompatFetch } : {}),
         }
       : undefined,
+    // Disable streaming for Ollama so tool-call arguments arrive as one
+    // complete JSON body. GLM (and other open models) sometimes double-encode
+    // array/object tool arguments as JSON strings, which LangChain's schema
+    // validation then rejects; repairing that is only reliable on a fully
+    // assembled response, not on split SSE deltas.
+    ...(isOllama ? { streaming: false } : {}),
     model: modelId,
   });
 }
@@ -420,8 +426,106 @@ const ollamaCompatFetch: typeof fetch = async (input, init) => {
     init = { ...init, body: flattenOllamaMessageContent(init.body) };
   }
 
-  return fetch(input, init);
+  const response = await fetch(input, init);
+
+  // Repair double-encoded tool-call arguments on the (non-streamed) response.
+  if (
+    response.ok &&
+    (response.headers.get("content-type") ?? "").includes("application/json")
+  ) {
+    const text = await response.text();
+    const repaired = repairOllamaToolCallArguments(text);
+
+    return new Response(repaired, {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    });
+  }
+
+  return response;
 };
+
+function repairOllamaToolCallArguments(body: string): string {
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return body;
+  }
+
+  if (!isRecord(payload) || !Array.isArray(payload.choices)) {
+    return body;
+  }
+
+  let changed = false;
+
+  for (const choice of payload.choices) {
+    const message = isRecord(choice) ? choice.message : undefined;
+    const toolCalls =
+      isRecord(message) && Array.isArray(message.tool_calls)
+        ? message.tool_calls
+        : [];
+
+    for (const toolCall of toolCalls) {
+      const fn = isRecord(toolCall) ? toolCall.function : undefined;
+
+      if (!isRecord(fn) || typeof fn.arguments !== "string") {
+        continue;
+      }
+
+      const unwrapped = unwrapStringifiedJsonValues(fn.arguments);
+
+      if (unwrapped !== fn.arguments) {
+        fn.arguments = unwrapped;
+        changed = true;
+      }
+    }
+  }
+
+  return changed ? JSON.stringify(payload) : body;
+}
+
+// Given a tool-call `arguments` JSON string, un-stringify any top-level value
+// that is itself a JSON-encoded array or object (e.g. {"todos":"[...]"} ->
+// {"todos":[...]}). Returns the original string if nothing needed repair.
+function unwrapStringifiedJsonValues(argumentsJson: string): string {
+  let args: unknown;
+
+  try {
+    args = JSON.parse(argumentsJson);
+  } catch {
+    return argumentsJson;
+  }
+
+  if (!isRecord(args)) {
+    return argumentsJson;
+  }
+
+  let changed = false;
+
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const trimmed = value.trim();
+
+    if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) {
+      continue;
+    }
+
+    try {
+      args[key] = JSON.parse(value);
+      changed = true;
+    } catch {
+      // Not actually JSON; leave the string untouched.
+    }
+  }
+
+  return changed ? JSON.stringify(args) : argumentsJson;
+}
 
 function flattenOllamaMessageContent(body: string): string {
   let payload: unknown;
