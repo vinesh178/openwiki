@@ -404,10 +404,58 @@ async function createModel(provider: OpenWikiProvider, modelId: string) {
     configuration: providerConfig.baseURL
       ? {
           baseURL: providerConfig.baseURL,
+          // Ollama Cloud's OpenAI-compatible endpoint rejects multi-part array
+          // `content` (which LangChain emits on tool/system/assistant messages)
+          // with "400 invalid message format". Flatten array content to strings
+          // on the way out so the agent's tool loop is accepted.
+          ...(provider === "ollama" ? { fetch: ollamaCompatFetch } : {}),
         }
       : undefined,
     model: modelId,
   });
+}
+
+const ollamaCompatFetch: typeof fetch = async (input, init) => {
+  if (init?.body && typeof init.body === "string") {
+    init = { ...init, body: flattenOllamaMessageContent(init.body) };
+  }
+
+  return fetch(input, init);
+};
+
+function flattenOllamaMessageContent(body: string): string {
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return body;
+  }
+
+  if (
+    !isRecord(payload) ||
+    !Array.isArray((payload as { messages?: unknown }).messages)
+  ) {
+    return body;
+  }
+
+  const messages = (payload as { messages: unknown[] }).messages;
+
+  for (const message of messages) {
+    if (isRecord(message) && Array.isArray(message.content)) {
+      message.content = message.content
+        .map((part) =>
+          isRecord(part) && typeof part.text === "string"
+            ? part.text
+            : typeof part === "string"
+              ? part
+              : "",
+        )
+        .join("");
+    }
+  }
+
+  return JSON.stringify(payload);
 }
 
 function createModelRoute(
